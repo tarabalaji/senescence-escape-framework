@@ -1,0 +1,13 @@
+feature,cell_lines,mean_spearman_correlation,minimum_absolute_correlation,maximum_p_value,direction
+rap_score,2,0.8722288198797019,0.8694321638526362,0.0,increasing
+repopulation_associated_potential,2,0.8722288198797019,0.8694321638526362,0.0,increasing
+pathway__processing_of_capped_intron_containing_pre_mrna_r_hsa_72203,2,0.6724803417840897,0.6320868017329415,0.0,increasing
+pathway__mrna_splicing_major_pathway_r_hsa_72163,2,0.6591080967868654,0.6149632640722389,0.0,increasing
+pathway__mrna_splicing_r_hsa_72172,2,0.659766453883567,0.6139939618823069,0.0,increasing
+pathway__e2f_targets,2,0.604624296023313,0.5817922012053248,0.0,increasing
+pathway__myc_targets_v1,2,0.6152596719737118,0.5248650587475188,0.0,increasing
+pathway__g2_m_checkpoint,2,0.5792559658448717,0.5220864868825897,0.0,increasing
+pathway__mitochondrial_translation_r_hsa_5368287,2,0.5674023707224778,0.47867386345530166,0.0,increasing
+pathway__mitochondrial_translation_elongation_r_hsa_5389840,2,0.5643191985321822,0.4751491006105957,0.0,increasing
+pathway__mitochondrial_translation_initiation_r_hsa_5368286,2,0.5643673874816358,0.47456565009162066,0.0,increasing
+pathway__mitochondrial_translation_termination_r_hsa_5419276,2,0.5641073345288476,0.4741446878257074,0.0,increasing

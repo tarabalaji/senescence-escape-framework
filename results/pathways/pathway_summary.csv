@@ -1,0 +1,11 @@
+cell_line,comparison,gene_set_library,significant_pathways,positively_enriched,negatively_enriched
+MCF7,REPOP_vs_CTR,Reactome_2022,1,1,0
+MCF7,REPOP_vs_TIS,MSigDB_Hallmark_2020,6,3,3
+MCF7,REPOP_vs_TIS,Reactome_2022,8,7,1
+MCF7,TIS_vs_CTR,MSigDB_Hallmark_2020,6,4,2
+MCF7,TIS_vs_CTR,Reactome_2022,14,4,10
+T47D,REPOP_vs_CTR,MSigDB_Hallmark_2020,4,0,4
+T47D,REPOP_vs_TIS,MSigDB_Hallmark_2020,5,3,2
+T47D,REPOP_vs_TIS,Reactome_2022,2,0,2
+T47D,TIS_vs_CTR,MSigDB_Hallmark_2020,5,2,3
+T47D,TIS_vs_CTR,Reactome_2022,2,2,0

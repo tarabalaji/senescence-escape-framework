@@ -1,0 +1,3 @@
+cell_line,escape_quantile,threshold,tis_cells,escape_prone_cells,escape_prone_fraction
+MCF7,0.9,0.3894724286219572,11011,1102,0.10008173644537281
+T47D,0.9,0.2075760077425043,25309,2531,0.10000395116361768

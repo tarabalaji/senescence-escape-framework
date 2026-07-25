@@ -1,0 +1,6 @@
+comparison,gene_set_library,pathway,direction,cell_lines_supported,mean_normalized_enrichment_score,minimum_absolute_nes,maximum_false_discovery_rate
+REPOP_vs_TIS,MSigDB_Hallmark_2020,E2F Targets,positive,2,1.5685758701709123,1.4399246238692656,0.0
+REPOP_vs_TIS,MSigDB_Hallmark_2020,Myc Targets V1,positive,2,1.4673546246698328,1.4227412836724922,0.003190953367295527
+REPOP_vs_TIS,MSigDB_Hallmark_2020,G2-M Checkpoint,positive,2,1.5122248005628989,1.3817845278947407,0.0
+TIS_vs_CTR,MSigDB_Hallmark_2020,E2F Targets,negative,2,-1.4264556001808542,1.3431271719412576,0.001846856698500644
+TIS_vs_CTR,MSigDB_Hallmark_2020,G2-M Checkpoint,negative,2,-1.3845589124011686,1.289387052404982,0.0034628563096887077

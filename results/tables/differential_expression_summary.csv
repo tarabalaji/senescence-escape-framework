@@ -1,0 +1,7 @@
+cell_line,comparison,significant_genes,upregulated_genes,downregulated_genes
+MCF7,REPOP_vs_CTR,6028,2202,3826
+MCF7,REPOP_vs_TIS,6973,4058,2915
+MCF7,TIS_vs_CTR,8519,3134,5385
+T47D,REPOP_vs_CTR,3228,688,2540
+T47D,REPOP_vs_TIS,6210,4453,1757
+T47D,TIS_vs_CTR,6658,1361,5297
