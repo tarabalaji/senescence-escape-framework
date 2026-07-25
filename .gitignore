@@ -18,3 +18,8 @@ data/processed/
 *.loom
 *.pkl
 *.joblib
+data/raw/
+venv/
+__pycache__/
+*.pyc
+.DS_Store
