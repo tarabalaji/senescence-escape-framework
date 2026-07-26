@@ -1,0 +1,57 @@
+{
+  "project_name": "SenEscape",
+  "configured_random_seed": 42,
+  "all_required_files_exist": true,
+  "file_checks": [
+    {
+      "path": "results/tables/transition_feature_table.csv",
+      "exists": true,
+      "size_bytes": 18860219,
+      "sha256": "6abd085830b88bd57e7023c0dcca987e20e50c30896a5138112813a4a23637db"
+    },
+    {
+      "path": "results/tables/target_priority_rankings.csv",
+      "exists": true,
+      "size_bytes": 16739,
+      "sha256": "5f3dbd8ec52b036bb334584111d3df5c28b373945927b3e0c875b5f5981b68d3"
+    },
+    {
+      "path": "results/pathways/pathway_results_all.csv",
+      "exists": true,
+      "size_bytes": 2869369,
+      "sha256": "1852971a5b3a8365ba30a18266ffd968eef90333f3d8bd670eac72fb568ef09b"
+    },
+    {
+      "path": "results/tables/rap_plus_pathways_model.joblib",
+      "exists": true,
+      "size_bytes": 3189,
+      "sha256": "c6af5f98a05c906ec9f323305f1f96a7ca134514da97226978060011e94fcb3f"
+    },
+    {
+      "path": "results/tables/baseline_model_summary.csv",
+      "exists": true,
+      "size_bytes": 4612,
+      "sha256": "68f6de5068f517901e8801bdacae9bf1c2fe4785e883d6b364024899cdba887d"
+    },
+    {
+      "path": "results/tables/validation_summary.csv",
+      "exists": true,
+      "size_bytes": 506,
+      "sha256": "74c477027a993f114c02c7e618a73da51c33e13c3c16d1faddc2aac20ec6a7c9"
+    },
+    {
+      "path": "results/tables/top_predicted_interventions.csv",
+      "exists": true,
+      "size_bytes": 15632,
+      "sha256": "3e5b274ebde0632c5fdbe5b983fac4958a850b1977dc36ca815c7982a2e5a1c6"
+    }
+  ],
+  "model_check": {
+    "expected_feature_count": 11,
+    "missing_features": [],
+    "feature_order_matches": true,
+    "model_name": "rap_plus_pathways",
+    "training_cell_count": 79508,
+    "random_state": 42
+  }
+}

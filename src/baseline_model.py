@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import anndata as ad
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
@@ -20,6 +22,9 @@ DEFAULT_CELL_LINE_COLUMN = "cell_line"
 DEFAULT_LABEL_COLUMN = "transition_label"
 DEFAULT_CELL_ID_COLUMN = "cell_id"
 DEFAULT_RANDOM_STATE = 42
+DEFAULT_SAVED_MODEL_NAME = "rap_plus_pathways"
+DEFAULT_MODEL_ARTIFACT_NAME = "rap_plus_pathways_model.joblib"
+DEFAULT_MODEL_METADATA_NAME = "rap_plus_pathways_model_metadata.json"
 
 
 def validate_inputs(
@@ -461,6 +466,84 @@ def run_baseline_analysis(
     )
 
 
+def fit_and_save_model_artifact(
+    feature_table: pd.DataFrame,
+    output_directory: str | Path,
+    model_name: str = DEFAULT_SAVED_MODEL_NAME,
+    label_column: str = DEFAULT_LABEL_COLUMN,
+    cell_id_column: str = DEFAULT_CELL_ID_COLUMN,
+    random_state: int = DEFAULT_RANDOM_STATE,
+) -> tuple[Path, Path]:
+    if cell_id_column not in feature_table.columns:
+        raise ValueError(f"Feature table is missing {cell_id_column}")
+
+    if label_column not in feature_table.columns:
+        raise ValueError(f"Feature table is missing {label_column}")
+
+    indexed = feature_table.set_index(cell_id_column).copy()
+    indexed.index = indexed.index.astype(str)
+
+    feature_groups = identify_feature_groups(
+        indexed,
+        label_column=label_column,
+    )
+
+    if model_name not in feature_groups:
+        raise ValueError(
+            f"Cannot save {model_name}: required RAP and pathway "
+            "features were not found"
+        )
+
+    feature_columns = feature_groups[model_name]
+    features = indexed[feature_columns].apply(
+        pd.to_numeric,
+        errors="coerce",
+    )
+    labels = pd.to_numeric(
+        indexed[label_column],
+        errors="coerce",
+    )
+
+    if features.isna().any().any():
+        invalid = features.columns[features.isna().any()].tolist()
+        raise ValueError(
+            f"Saved-model features must be numeric and nonmissing: {invalid}"
+        )
+
+    if labels.isna().any() or not labels.isin([0, 1]).all():
+        raise ValueError(f"{label_column} must contain only 0 and 1")
+
+    model = create_model(random_state=random_state)
+    model.fit(features.astype(float), labels.astype(int))
+
+    artifact = {
+        "model_name": model_name,
+        "pipeline": model,
+        "feature_columns": list(map(str, feature_columns)),
+        "label_column": label_column,
+        "cell_id_column": cell_id_column,
+        "random_state": random_state,
+        "training_cell_count": len(features),
+        "positive_cell_count": int(labels.sum()),
+        "negative_cell_count": int((1 - labels).sum()),
+    }
+
+    output_directory = Path(output_directory)
+    output_directory.mkdir(parents=True, exist_ok=True)
+    artifact_path = output_directory / DEFAULT_MODEL_ARTIFACT_NAME
+    metadata_path = output_directory / DEFAULT_MODEL_METADATA_NAME
+
+    joblib.dump(artifact, artifact_path)
+
+    metadata = {key: value for key, value in artifact.items() if key != "pipeline"}
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2),
+        encoding="utf-8",
+    )
+
+    return artifact_path, metadata_path
+
+
 def save_results(
     metrics: pd.DataFrame,
     predictions: pd.DataFrame,
@@ -527,13 +610,20 @@ def main() -> None:
         if not path.exists():
             raise FileNotFoundError(f"Required input does not exist: {path}")
 
+    feature_table = pd.read_csv(args.feature_table)
+
     results = run_baseline_analysis(
         ad.read_h5ad(args.input_dataset),
-        pd.read_csv(args.feature_table),
+        feature_table,
     )
 
     save_results(
         *results,
+        output_directory=args.output_directory,
+    )
+
+    artifact_path, metadata_path = fit_and_save_model_artifact(
+        feature_table,
         output_directory=args.output_directory,
     )
 
@@ -556,6 +646,8 @@ def main() -> None:
             )
 
     print(f"Saved baseline-model outputs to {args.output_directory}")
+    print(f"Saved exact rap_plus_pathways model to {artifact_path}")
+    print(f"Saved model metadata to {metadata_path}")
 
 
 if __name__ == "__main__":

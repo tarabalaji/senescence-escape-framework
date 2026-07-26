@@ -1,0 +1,59 @@
+{
+  "project_name": "SenEscape",
+  "random_seed": 42,
+  "pipeline": {
+    "modules": [
+      "load_data",
+      "quality_control",
+      "preprocess",
+      "differential_expression",
+      "escape_index",
+      "dimensionality_reduction",
+      "regulatory_network",
+      "pathway_analysis",
+      "transition_model",
+      "trajectory",
+      "escape_prone_cells",
+      "target_prioritization",
+      "regulatory_propagation",
+      "baseline_model",
+      "validation",
+      "perturbation"
+    ],
+    "skip_by_default": [
+      "load_data"
+    ],
+    "stop_on_error": true
+  },
+  "paths": {
+    "tables": "results/tables",
+    "figures": "results/figures",
+    "feature_table": "results/tables/transition_feature_table.csv",
+    "target_rankings": "results/tables/target_priority_rankings.csv",
+    "pathway_results": "results/pathways/pathway_results_all.csv",
+    "model_artifact": "results/tables/rap_plus_pathways_model.joblib"
+  },
+  "perturbation_sensitivity": {
+    "strengths": [
+      0.25,
+      0.5,
+      0.75,
+      1.0,
+      1.25,
+      1.5
+    ],
+    "rap_effect_fractions": [
+      0.1,
+      0.25,
+      0.5
+    ],
+    "maximum_targets": 50,
+    "comparison": "REPOP_vs_TIS",
+    "top_k_stability": 10,
+    "bootstrap_iterations": 200
+  },
+  "figures": {
+    "top_targets": 15,
+    "dpi": 300
+  }
+}

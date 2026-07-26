@@ -23,3 +23,9 @@ venv/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Large generated result tables
+results/tables/perturbation_predictions.csv
+results/tables/baseline_model_predictions.csv
+results/tables/transition_feature_table.csv
+results/tables/differential_expression_all.csv

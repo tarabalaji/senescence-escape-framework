@@ -1,0 +1,22 @@
+{
+  "model_name": "rap_plus_pathways",
+  "feature_columns": [
+    "rap_score",
+    "pathway__interferon_alpha_response",
+    "pathway__keratinization_r_hsa_6805567",
+    "pathway__interferon_gamma_response",
+    "pathway__e2f_targets",
+    "pathway__interferon_alpha_beta_signaling_r_hsa_909733",
+    "pathway__immunoregulatory_interactions_between_a_lymphoid_and_a_non_lymphoid_cell_r_hsa_198933",
+    "pathway__g2_m_checkpoint",
+    "pathway__cell_cell_communication_r_hsa_1500931",
+    "pathway__processing_of_capped_intron_containing_pre_mrna_r_hsa_72203",
+    "pathway__binding_and_uptake_of_ligands_by_scavenger_receptors_r_hsa_2173782"
+  ],
+  "label_column": "transition_label",
+  "cell_id_column": "cell_id",
+  "random_state": 42,
+  "training_cell_count": 79508,
+  "positive_cell_count": 24096,
+  "negative_cell_count": 55412
+}
