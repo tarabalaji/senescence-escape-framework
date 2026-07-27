@@ -11,7 +11,7 @@ from scipy.stats import spearmanr
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import balanced_accuracy_score, roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -26,7 +26,6 @@ FIGURES_DIR = ROOT / "results" / "figures"
 RANDOM_STATE = 42
 FIGURE_DPI = 300
 
-# Canonical human S-phase and G2/M-phase markers commonly used by Seurat/Scanpy.
 S_GENES = [
     "MCM5",
     "PCNA",
@@ -135,9 +134,9 @@ def configure_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
-def save_figure(fig: plt.Figure, name: str) -> None:
+def save_figure(fig: plt.Figure, filename: str) -> None:
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
-    path = FIGURES_DIR / name
+    path = FIGURES_DIR / filename
     fig.tight_layout()
     fig.savefig(path, dpi=FIGURE_DPI, bbox_inches="tight")
     plt.close(fig)
@@ -149,21 +148,22 @@ def load_adata() -> sc.AnnData:
         raise FileNotFoundError(f"Missing input file: {INPUT_PATH}")
 
     LOGGER.info("Loading %s", INPUT_PATH.relative_to(ROOT))
-    adata = sc.read_h5ad(INPUT_PATH)
+    source = sc.read_h5ad(INPUT_PATH)
 
-    # Cell-cycle scoring should use normalized, log-transformed expression.
-    # Prefer .raw when it contains the full gene set.
-    if adata.raw is not None:
-        LOGGER.info("Using adata.raw for cell-cycle scoring.")
-        scoring = adata.raw.to_adata()
-        scoring.obs = adata.obs.copy()
-        scoring.obsm = adata.obsm.copy()
-        return scoring
+    if source.raw is None:
+        LOGGER.warning(
+            "adata.raw is absent. Assuming adata.X is normalized and log-transformed."
+        )
+        return source
 
-    LOGGER.warning(
-        "adata.raw is absent. Assuming adata.X is already normalized and log-transformed."
-    )
-    return adata
+    LOGGER.info("Using adata.raw for cell-cycle scoring.")
+    scoring = source.raw.to_adata()
+    scoring.obs = source.obs.copy()
+
+    for key in source.obsm.keys():
+        scoring.obsm[key] = np.asarray(source.obsm[key])
+
+    return scoring
 
 
 def standardize_gene_names(adata: sc.AnnData) -> None:
@@ -186,8 +186,8 @@ def score_cell_cycle(adata: sc.AnnData) -> None:
 
     if len(s_genes) < 10 or len(g2m_genes) < 10:
         raise ValueError(
-            "Too few cell-cycle genes were found. Check whether var_names are gene "
-            "symbols and whether the expression matrix contains the full gene set."
+            "Too few canonical cell-cycle genes were found. Check that var_names "
+            "contain human gene symbols."
         )
 
     sc.tl.score_genes_cell_cycle(
@@ -197,33 +197,21 @@ def score_cell_cycle(adata: sc.AnnData) -> None:
         random_state=RANDOM_STATE,
     )
 
-    # A single continuous index is useful for correlation diagnostics.
     adata.obs["cell_cycle_activity"] = adata.obs["S_score"] + adata.obs["G2M_score"]
-
-
-def copy_project_metadata(source_path: Path, adata: sc.AnnData) -> None:
-    source = sc.read_h5ad(source_path, backed="r")
-    try:
-        for column in source.obs.columns:
-            if column not in adata.obs.columns:
-                adata.obs[column] = source.obs[column].reindex(adata.obs_names)
-        for key in source.obsm.keys():
-            if key not in adata.obsm:
-                adata.obsm[key] = np.asarray(source.obsm[key])
-    finally:
-        source.file.close()
 
 
 def create_umap_figures(adata: sc.AnnData) -> None:
     if "X_umap" not in adata.obsm:
-        LOGGER.warning("X_umap is absent; skipping UMAP figures.")
+        LOGGER.warning("X_umap is absent; skipping cell-cycle UMAPs.")
         return
 
-    for column, title, filename in (
+    panels = (
         ("phase", "Cell-cycle phase", "umap_cell_cycle_phase.png"),
         ("S_score", "S-phase score", "umap_s_score.png"),
         ("G2M_score", "G2/M-phase score", "umap_g2m_score.png"),
-    ):
+    )
+
+    for column, title, filename in panels:
         axis = sc.pl.umap(
             adata,
             color=column,
@@ -236,45 +224,62 @@ def create_umap_figures(adata: sc.AnnData) -> None:
         save_figure(axis.figure, filename)
 
 
-def create_phase_summary(adata: sc.AnnData) -> pd.DataFrame:
-    obs = adata.obs.copy()
-
-    probability_column = (
-        "transition_probability_oof"
-        if "transition_probability_oof" in obs.columns
-        else "transition_probability"
+def transition_probability_column(obs: pd.DataFrame) -> str:
+    if "transition_probability_oof" in obs.columns:
+        return "transition_probability_oof"
+    if "transition_probability" in obs.columns:
+        return "transition_probability"
+    raise KeyError(
+        "Neither transition_probability_oof nor transition_probability exists."
     )
 
-    aggregations = {
-        "cell_count": ("phase", "size"),
-        "mean_s_score": ("S_score", "mean"),
-        "mean_g2m_score": ("G2M_score", "mean"),
-        "mean_rap_score": ("rap_score", "mean"),
-        "mean_transition_probability": (probability_column, "mean"),
-        "median_transition_probability": (probability_column, "median"),
+
+def create_phase_summary(adata: sc.AnnData) -> pd.DataFrame:
+    obs = adata.obs.copy()
+    probability = transition_probability_column(obs)
+
+    required = {
+        "cell_line",
+        "condition",
+        "phase",
+        "S_score",
+        "G2M_score",
+        "rap_score",
+        probability,
     }
+    missing = sorted(required.difference(obs.columns))
+    if missing:
+        raise KeyError(f"Missing columns for phase summary: {missing}")
 
     summary = (
         obs.groupby(["cell_line", "condition", "phase"], observed=True)
-        .agg(**aggregations)
+        .agg(
+            cell_count=("phase", "size"),
+            mean_s_score=("S_score", "mean"),
+            mean_g2m_score=("G2M_score", "mean"),
+            mean_rap_score=("rap_score", "mean"),
+            mean_transition_probability=(probability, "mean"),
+            median_transition_probability=(probability, "median"),
+        )
         .reset_index()
     )
-    summary.to_csv(TABLES_DIR / "cell_cycle_phase_summary.csv", index=False)
+
+    path = TABLES_DIR / "cell_cycle_phase_summary.csv"
+    summary.to_csv(path, index=False)
+    LOGGER.info("Saved %s", path.relative_to(ROOT))
     return summary
 
 
 def create_phase_probability_plot(adata: sc.AnnData) -> None:
     obs = adata.obs.copy()
-    probability_column = (
-        "transition_probability_oof"
-        if "transition_probability_oof" in obs.columns
-        else "transition_probability"
-    )
+    probability = transition_probability_column(obs)
 
-    phases = [phase for phase in ("G1", "S", "G2M") if phase in set(obs["phase"])]
+    phases = [
+        phase for phase in ("G1", "S", "G2M") if phase in set(obs["phase"].astype(str))
+    ]
     values = [
         pd.to_numeric(
-            obs.loc[obs["phase"] == phase, probability_column],
+            obs.loc[obs["phase"].astype(str) == phase, probability],
             errors="coerce",
         ).dropna()
         for phase in phases
@@ -284,71 +289,58 @@ def create_phase_probability_plot(adata: sc.AnnData) -> None:
     axis.boxplot(values, tick_labels=phases, showfliers=False)
     axis.set_xlabel("Cell-cycle phase")
     axis.set_ylabel("Out-of-fold transition probability")
-    axis.set_title("Escape prediction across cell-cycle phases")
-    save_figure(fig, "escape_probability_by_cell_cycle_phase.png")
+    axis.set_title("Transition probability across cell-cycle phases")
+    save_figure(fig, "transition_probability_by_cell_cycle_phase.png")
 
 
 def calculate_correlations(adata: sc.AnnData) -> pd.DataFrame:
     obs = adata.obs.copy()
-    probability_column = (
-        "transition_probability_oof"
-        if "transition_probability_oof" in obs.columns
-        else "transition_probability"
-    )
+    probability = transition_probability_column(obs)
 
     outcomes = [
         column
-        for column in (
-            "rap_score",
-            probability_column,
-            "escape_pseudotime",
-        )
+        for column in ("rap_score", probability, "escape_pseudotime")
         if column in obs.columns
     ]
-    cycle_scores = ["S_score", "G2M_score", "cell_cycle_activity"]
+    cycle_measures = ["S_score", "G2M_score", "cell_cycle_activity"]
+
+    groups: list[tuple[str, pd.DataFrame]] = [("all", obs)]
+    groups.extend(
+        (str(name), group) for name, group in obs.groupby("cell_line", observed=True)
+    )
 
     rows: list[dict[str, object]] = []
-
-    # Report both pooled and cell-line-specific relationships.
-    groups = [("all", obs)]
-    if "cell_line" in obs.columns:
-        groups.extend(
-            (str(name), group)
-            for name, group in obs.groupby("cell_line", observed=True)
-        )
-
     for group_name, group in groups:
         for outcome in outcomes:
-            for cycle_score in cycle_scores:
+            for measure in cycle_measures:
                 frame = (
-                    group[[outcome, cycle_score]]
-                    .apply(
-                        pd.to_numeric,
-                        errors="coerce",
-                    )
+                    group[[outcome, measure]]
+                    .apply(pd.to_numeric, errors="coerce")
                     .dropna()
                 )
                 if len(frame) < 3:
                     continue
 
-                rho, p_value = spearmanr(frame[outcome], frame[cycle_score])
+                rho, p_value = spearmanr(frame[outcome], frame[measure])
                 rows.append(
                     {
                         "group": group_name,
                         "outcome": outcome,
-                        "cell_cycle_measure": cycle_score,
-                        "spearman_rho": rho,
-                        "p_value": p_value,
+                        "cell_cycle_measure": measure,
+                        "spearman_rho": float(rho),
+                        "p_value": float(p_value),
                         "n_cells": len(frame),
                     }
                 )
 
     results = pd.DataFrame(rows)
-    results.to_csv(TABLES_DIR / "cell_cycle_correlations.csv", index=False)
+    path = TABLES_DIR / "cell_cycle_correlations.csv"
+    results.to_csv(path, index=False)
+    LOGGER.info("Saved %s", path.relative_to(ROOT))
     return results
 
 
-def scatter_with_hexbin(
+def create_hexbin(
     adata: sc.AnnData,
     outcome: str,
     filename: str,
@@ -356,15 +348,14 @@ def scatter_with_hexbin(
 ) -> None:
     frame = (
         adata.obs[["cell_cycle_activity", outcome]]
-        .apply(
-            pd.to_numeric,
-            errors="coerce",
-        )
+        .apply(pd.to_numeric, errors="coerce")
         .dropna()
     )
 
     if len(frame) > 100_000:
         frame = frame.sample(100_000, random_state=RANDOM_STATE)
+
+    rho, _ = spearmanr(frame["cell_cycle_activity"], frame[outcome])
 
     fig, axis = plt.subplots(figsize=(7, 5))
     plot = axis.hexbin(
@@ -374,7 +365,6 @@ def scatter_with_hexbin(
         mincnt=1,
     )
     fig.colorbar(plot, ax=axis, label="Cell count")
-    rho, _ = spearmanr(frame["cell_cycle_activity"], frame[outcome])
     axis.set_xlabel("Cell-cycle activity (S score + G2M score)")
     axis.set_ylabel(outcome.replace("_", " ").title())
     axis.set_title(f"{title}\nSpearman rho = {rho:.3f}")
@@ -425,102 +415,164 @@ def make_logistic_pipeline(
     )
 
 
-def cell_line_holdout_auc(
+def evaluate_leave_one_cell_line_out(
     frame: pd.DataFrame,
     features: list[str],
     label_column: str,
-) -> tuple[float, float, list[float]]:
-    fold_scores: list[float] = []
+) -> dict[str, object]:
+    fold_auc: list[float] = []
+    fold_balanced_accuracy: list[float] = []
+    fold_names: list[str] = []
 
-    for held_out in sorted(frame["cell_line"].dropna().astype(str).unique()):
-        train_mask = frame["cell_line"].astype(str) != held_out
-        test_mask = ~train_mask
+    cell_lines = sorted(frame["cell_line"].dropna().astype(str).unique())
 
-        train = frame.loc[train_mask]
-        test = frame.loc[test_mask]
+    for held_out in cell_lines:
+        train = frame[frame["cell_line"].astype(str) != held_out]
+        test = frame[frame["cell_line"].astype(str) == held_out]
 
         if train[label_column].nunique() < 2 or test[label_column].nunique() < 2:
             LOGGER.warning(
-                "Skipping held-out cell line %s due to one-class labels.", held_out
+                "Skipping held-out cell line %s because one split has one class.",
+                held_out,
             )
             continue
 
         numeric_features = [feature for feature in features if feature != "phase"]
         categorical_features = [feature for feature in features if feature == "phase"]
 
-        model = make_logistic_pipeline(numeric_features, categorical_features)
-        model.fit(train[features], train[label_column])
-        probability = model.predict_proba(test[features])[:, 1]
-        fold_scores.append(roc_auc_score(test[label_column], probability))
-
-    if not fold_scores:
-        return np.nan, np.nan, []
-
-    return float(np.mean(fold_scores)), float(np.std(fold_scores)), fold_scores
-
-
-def create_adjusted_model_comparison(adata: sc.AnnData) -> pd.DataFrame:
-    obs = adata.obs.copy()
-
-    if "escape_prone_status" not in obs.columns:
-        LOGGER.warning(
-            "escape_prone_status is absent; skipping adjusted model comparison."
+        model = make_logistic_pipeline(
+            numeric_features,
+            categorical_features,
         )
-        return pd.DataFrame()
+        model.fit(train[features], train[label_column])
 
-    # Restrict to TIS cells because stable_tis vs escape_prone_tis is the
-    # scientifically relevant within-state comparison.
-    tis = obs[obs["condition"].astype(str).str.upper() == "TIS"].copy()
-    tis["escape_label"] = (
-        tis["escape_prone_status"].astype(str) == "escape_prone_tis"
-    ).astype(int)
+        probability = model.predict_proba(test[features])[:, 1]
+        prediction = (probability >= 0.5).astype(int)
 
-    model_features = {
+        fold_names.append(held_out)
+        fold_auc.append(roc_auc_score(test[label_column], probability))
+        fold_balanced_accuracy.append(
+            balanced_accuracy_score(test[label_column], prediction)
+        )
+
+    if not fold_auc:
+        return {
+            "roc_auc_mean": np.nan,
+            "roc_auc_std": np.nan,
+            "balanced_accuracy_mean": np.nan,
+            "balanced_accuracy_std": np.nan,
+            "fold_cell_lines": "",
+            "fold_roc_auc": "",
+            "fold_balanced_accuracy": "",
+            "n_folds": 0,
+        }
+
+    return {
+        "roc_auc_mean": float(np.mean(fold_auc)),
+        "roc_auc_std": float(np.std(fold_auc)),
+        "balanced_accuracy_mean": float(np.mean(fold_balanced_accuracy)),
+        "balanced_accuracy_std": float(np.std(fold_balanced_accuracy)),
+        "fold_cell_lines": ";".join(fold_names),
+        "fold_roc_auc": ";".join(f"{value:.6f}" for value in fold_auc),
+        "fold_balanced_accuracy": ";".join(
+            f"{value:.6f}" for value in fold_balanced_accuracy
+        ),
+        "n_folds": len(fold_auc),
+    }
+
+
+def available_feature_sets(frame: pd.DataFrame) -> dict[str, list[str]]:
+    pathways = [column for column in frame.columns if column.startswith("pathway__")]
+    regulators = [
+        column for column in frame.columns if column.startswith("regulator__")
+    ]
+
+    candidates = {
         "cell_cycle_only": ["S_score", "G2M_score", "phase"],
         "rap_only": ["rap_score"],
-        "rap_plus_cell_cycle": ["rap_score", "S_score", "G2M_score", "phase"],
-        "pathways_only": [
-            column for column in tis.columns if column.startswith("pathway__")
-        ],
-        "pathways_plus_cell_cycle": [
-            *[column for column in tis.columns if column.startswith("pathway__")],
+        "pathways_only": pathways,
+        "regulators_only": regulators,
+        "rap_plus_cell_cycle": [
+            "rap_score",
             "S_score",
             "G2M_score",
             "phase",
         ],
-        "rap_pathways_cell_cycle": [
+        "pathways_plus_cell_cycle": [
+            *pathways,
+            "S_score",
+            "G2M_score",
+            "phase",
+        ],
+        "rap_plus_pathways": ["rap_score", *pathways],
+        "rap_plus_pathways_plus_cell_cycle": [
             "rap_score",
-            *[column for column in tis.columns if column.startswith("pathway__")],
+            *pathways,
+            "S_score",
+            "G2M_score",
+            "phase",
+        ],
+        "rap_plus_pathways_plus_regulators_plus_cell_cycle": [
+            "rap_score",
+            *pathways,
+            *regulators,
             "S_score",
             "G2M_score",
             "phase",
         ],
     }
 
-    rows = []
-    for model_name, features in model_features.items():
-        features = [feature for feature in features if feature in tis.columns]
-        mean_auc, std_auc, fold_scores = cell_line_holdout_auc(
-            tis,
+    return {
+        name: [feature for feature in features if feature in frame.columns]
+        for name, features in candidates.items()
+    }
+
+
+def run_model_comparison(
+    frame: pd.DataFrame,
+    label_column: str,
+    prediction_task: str,
+    table_filename: str,
+    figure_filename: str,
+    figure_title: str,
+) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+
+    for model_name, features in available_feature_sets(frame).items():
+        if not features:
+            LOGGER.warning(
+                "Skipping %s because it has no available features.", model_name
+            )
+            continue
+
+        metrics = evaluate_leave_one_cell_line_out(
+            frame,
             features,
-            "escape_label",
+            label_column,
         )
         rows.append(
             {
+                "prediction_task": prediction_task,
                 "model": model_name,
-                "roc_auc_mean": mean_auc,
-                "roc_auc_std": std_auc,
-                "fold_scores": ";".join(f"{score:.6f}" for score in fold_scores),
                 "n_features": len(features),
-                "n_cells": len(tis),
+                "n_cells": len(frame),
+                "positive_fraction": float(frame[label_column].mean()),
+                **metrics,
             }
         )
 
-    results = pd.DataFrame(rows).sort_values("roc_auc_mean", ascending=False)
-    results.to_csv(TABLES_DIR / "cell_cycle_adjusted_models.csv", index=False)
+    results = pd.DataFrame(rows).sort_values(
+        "roc_auc_mean",
+        ascending=False,
+    )
 
-    plot_data = results.sort_values("roc_auc_mean")
-    fig, axis = plt.subplots(figsize=(8, 5))
+    table_path = TABLES_DIR / table_filename
+    results.to_csv(table_path, index=False)
+    LOGGER.info("Saved %s", table_path.relative_to(ROOT))
+
+    plot_data = results.dropna(subset=["roc_auc_mean"]).sort_values("roc_auc_mean")
+
+    fig, axis = plt.subplots(figsize=(9, max(5, 0.5 * len(plot_data))))
     axis.errorbar(
         plot_data["roc_auc_mean"],
         plot_data["model"],
@@ -529,13 +581,74 @@ def create_adjusted_model_comparison(adata: sc.AnnData) -> pd.DataFrame:
         capsize=4,
     )
     axis.axvline(0.5, linestyle="--", linewidth=1)
-    axis.set_xlim(0, 1)
+    axis.set_xlim(0, 1.02)
     axis.set_xlabel("Leave-one-cell-line-out ROC-AUC")
     axis.set_ylabel("Feature set")
-    axis.set_title("Does RAP/pathway signal persist beyond cell cycle?")
-    save_figure(fig, "cell_cycle_adjusted_model_comparison.png")
+    axis.set_title(figure_title)
+    save_figure(fig, figure_filename)
 
     return results
+
+
+def create_observed_outcome_analysis(adata: sc.AnnData) -> pd.DataFrame:
+    obs = adata.obs.copy()
+
+    required = {"condition", "cell_line"}
+    missing = sorted(required.difference(obs.columns))
+    if missing:
+        raise KeyError(f"Missing columns for observed-outcome analysis: {missing}")
+
+    frame = obs[obs["condition"].astype(str).str.upper().isin(["TIS", "REPOP"])].copy()
+    frame["observed_repopulation_label"] = (
+        frame["condition"].astype(str).str.upper() == "REPOP"
+    ).astype(int)
+
+    LOGGER.info(
+        "Observed-outcome task: %d cells; positive fraction %.3f.",
+        len(frame),
+        frame["observed_repopulation_label"].mean(),
+    )
+
+    return run_model_comparison(
+        frame=frame,
+        label_column="observed_repopulation_label",
+        prediction_task="tis_vs_repop_observed_condition",
+        table_filename="cell_cycle_adjusted_observed_outcome_models.csv",
+        figure_filename="cell_cycle_adjusted_observed_outcome_comparison.png",
+        figure_title=("Cell-cycle-adjusted prediction of observed repopulation"),
+    )
+
+
+def create_internal_outcome_analysis(adata: sc.AnnData) -> pd.DataFrame:
+    obs = adata.obs.copy()
+
+    if "escape_prone_status" not in obs.columns:
+        LOGGER.warning("escape_prone_status is absent; skipping internal diagnostic.")
+        return pd.DataFrame()
+
+    frame = obs[obs["condition"].astype(str).str.upper() == "TIS"].copy()
+
+    valid_statuses = {"stable_tis", "escape_prone_tis"}
+    frame = frame[frame["escape_prone_status"].astype(str).isin(valid_statuses)].copy()
+
+    frame["internal_escape_prone_label"] = (
+        frame["escape_prone_status"].astype(str) == "escape_prone_tis"
+    ).astype(int)
+
+    LOGGER.info(
+        "Internal task: %d cells; positive fraction %.3f.",
+        len(frame),
+        frame["internal_escape_prone_label"].mean(),
+    )
+
+    return run_model_comparison(
+        frame=frame,
+        label_column="internal_escape_prone_label",
+        prediction_task="stable_tis_vs_escape_prone_tis_internal",
+        table_filename="cell_cycle_adjusted_internal_models.csv",
+        figure_filename="cell_cycle_adjusted_internal_comparison.png",
+        figure_title=("Internal discrimination of escape-prone senescent cells"),
+    )
 
 
 def main() -> None:
@@ -545,9 +658,6 @@ def main() -> None:
 
     adata = load_adata()
     standardize_gene_names(adata)
-
-    # If scoring came from .raw, restore project metadata and embeddings.
-    copy_project_metadata(INPUT_PATH, adata)
     score_cell_cycle(adata)
 
     adata.write_h5ad(OUTPUT_PATH, compression="gzip")
@@ -559,27 +669,24 @@ def main() -> None:
     calculate_correlations(adata)
 
     if "rap_score" in adata.obs.columns:
-        scatter_with_hexbin(
+        create_hexbin(
             adata,
-            "rap_score",
-            "rap_vs_cell_cycle.png",
-            "RAP score versus cell-cycle activity",
+            outcome="rap_score",
+            filename="rap_vs_cell_cycle.png",
+            title="RAP score versus cell-cycle activity",
         )
 
-    probability_column = (
-        "transition_probability_oof"
-        if "transition_probability_oof" in adata.obs.columns
-        else "transition_probability"
+    probability = transition_probability_column(adata.obs)
+    create_hexbin(
+        adata,
+        outcome=probability,
+        filename="transition_probability_vs_cell_cycle.png",
+        title="Transition probability versus cell-cycle activity",
     )
-    if probability_column in adata.obs.columns:
-        scatter_with_hexbin(
-            adata,
-            probability_column,
-            "transition_probability_vs_cell_cycle.png",
-            "Transition probability versus cell-cycle activity",
-        )
 
-    create_adjusted_model_comparison(adata)
+    create_observed_outcome_analysis(adata)
+    create_internal_outcome_analysis(adata)
+
     LOGGER.info("Cell-cycle diagnostics complete.")
 
 
